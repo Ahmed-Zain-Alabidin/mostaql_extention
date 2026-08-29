@@ -2,7 +2,7 @@
  * offscreen.js - 24/7 Offscreen Background Engine & Audio Synthesizer
  * 
  * Runs continuously in a full window/DOM context to provide audio synthesis
- * and keep background polling ticking.
+ * and keep background polling ticking every 15 seconds.
  */
 
 import { parseJobsFromHTML } from './parser.js';
@@ -17,7 +17,7 @@ async function setupTimer() {
   if (timerHandle) clearInterval(timerHandle);
 
   const sync = await chrome.storage.sync.get(['pollIntervalSeconds']);
-  const sec = Math.max(5, Number(sync.pollIntervalSeconds) || 30);
+  const sec = Math.max(5, Number(sync.pollIntervalSeconds) || 15);
 
   console.log(`[Offscreen Engine] Background timer ticking every ${sec}s.`);
 

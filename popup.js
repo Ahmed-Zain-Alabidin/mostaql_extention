@@ -76,7 +76,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       keywordInput.value = syncData.keywords;
     }
 
-    const interval = syncData.pollIntervalSeconds || 30;
+    const interval = syncData.pollIntervalSeconds || 15;
     intervalSelect.value = String(interval);
 
     const isPaused = syncData.isPaused || false;

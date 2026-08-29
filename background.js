@@ -9,10 +9,10 @@
  * 5. Opens the project URL in a new tab when clicked.
  */
 
-import { normalizeArabicText, parseJobsFromHTML, parseJobsWithRegex } from './parser.js';
+import { normalizeArabicText, parseJobsFromHTML } from './parser.js';
 
 const ALARM_WATCHDOG_NAME = 'MOSTAQL_WATCHDOG_ALARM';
-const DEFAULT_INTERVAL_SECONDS = 30;
+const DEFAULT_INTERVAL_SECONDS = 15; // Fast & safe 15s monitoring
 const MAX_SEEN_ITEMS = 200;
 const MOSTAQL_PROJECTS_URL = 'https://mostaql.com/projects?sort=latest';
 const MOSTAQL_FALLBACK_URL = 'https://mostaql.com/projects';
@@ -31,7 +31,9 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   if (sync.isPaused === undefined) updates.isPaused = false;
   if (sync.keywords === undefined) updates.keywords = '';
   if (sync.soundEnabled === undefined) updates.soundEnabled = true;
-  if (sync.pollIntervalSeconds === undefined) updates.pollIntervalSeconds = DEFAULT_INTERVAL_SECONDS;
+  if (sync.pollIntervalSeconds === undefined || sync.pollIntervalSeconds === 3 || sync.pollIntervalSeconds === 30) {
+    updates.pollIntervalSeconds = DEFAULT_INTERVAL_SECONDS;
+  }
 
   if (Object.keys(updates).length > 0) {
     await chrome.storage.sync.set(updates);
@@ -40,13 +42,16 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   const local = await chrome.storage.local.get(['seenJobIds']);
   if (!local.seenJobIds) {
     await chrome.storage.local.set({ seenJobIds: [], lastCheckTime: null, lastError: null });
+  } else {
+    // Clear any stale previous error banner on update
+    await chrome.storage.local.set({ lastError: null });
   }
 
   await ensureOffscreenDocument();
   await setupWatchdogAlarm();
   
   // Initial check after short delay
-  setTimeout(() => pollMostaql({ source: 'install' }), 1200);
+  setTimeout(() => pollMostaql({ source: 'install' }), 1000);
 });
 
 chrome.runtime.onStartup.addListener(async () => {
@@ -118,7 +123,6 @@ async function playSoundViaOffscreen() {
     return new Promise((resolve) => {
       chrome.runtime.sendMessage({ action: 'PLAY_SOUND' }, (response) => {
         if (chrome.runtime.lastError) {
-          // If receiving end didn't respond, recreate offscreen document and retry once
           ensureOffscreenDocument(true).then(() => {
             setTimeout(() => {
               chrome.runtime.sendMessage({ action: 'PLAY_SOUND' }, () => {
@@ -172,7 +176,6 @@ async function fetchMostaqlPage(url) {
 // ============================================================================
 
 export async function pollMostaql(options = {}) {
-  // Prevent concurrent requests
   if (isFetching) {
     return { success: false, message: 'Check already in progress' };
   }
@@ -190,7 +193,7 @@ export async function pollMostaql(options = {}) {
     try {
       html = await fetchMostaqlPage(MOSTAQL_PROJECTS_URL);
     } catch (primaryErr) {
-      console.warn('[Mostaql Monitor] Primary URL fetch failed, trying fallback URL...', primaryErr.message);
+      console.warn('[Mostaql Monitor] Primary URL fetch notice, trying fallback...', primaryErr.message);
       html = await fetchMostaqlPage(MOSTAQL_FALLBACK_URL);
     }
 
@@ -198,7 +201,7 @@ export async function pollMostaql(options = {}) {
       throw new Error('Empty response received from Mostaql');
     }
 
-    // High-speed direct parsing in Service Worker
+    // High-speed direct parsing
     const parsedJobs = parseJobsFromHTML(html);
 
     if (!parsedJobs || parsedJobs.length === 0) {
@@ -330,11 +333,12 @@ async function dispatchJobNotification(job, playSound = true) {
 
   const message = messageLines.length > 0 ? messageLines.join('\n\n') : `مشروع جديد متاح على منصة مستقل`;
   const contextMessage = `مستقل • ${job.category || 'عام'} • ${job.postedTime || 'الآن'}`;
+  const iconUrl = chrome.runtime.getURL('icons/icon-128.png');
 
   try {
     await chrome.notifications.create(notificationId, {
       type: 'basic',
-      iconUrl: 'icons/icon-128.png',
+      iconUrl,
       title,
       message,
       contextMessage,
@@ -344,15 +348,26 @@ async function dispatchJobNotification(job, playSound = true) {
         { title: '🔗 فتح المشروع في مستقل' }
       ]
     });
-
-    if (playSound) {
-      await playSoundViaOffscreen();
-    }
-    
-    console.log(`[Mostaql Monitor] 🔔 Alert sent for #${job.id}: ${job.title}`);
   } catch (err) {
-    console.error('[Mostaql Monitor] Notification dispatch failed:', err);
+    // Fallback without buttons if platform restricts action buttons
+    try {
+      await chrome.notifications.create(notificationId, {
+        type: 'basic',
+        iconUrl,
+        title,
+        message,
+        priority: 2
+      });
+    } catch (fallbackErr) {
+      console.error('[Mostaql Monitor] Notification dispatch failed:', fallbackErr);
+    }
   }
+
+  if (playSound) {
+    await playSoundViaOffscreen();
+  }
+  
+  console.log(`[Mostaql Monitor] 🔔 Alert sent for #${job.id}: ${job.title}`);
 }
 
 // Handle notification body click
@@ -391,8 +406,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request?.action === 'CHECK_NOW') {
-    pollMostaql({ source: 'manual' }).then((result) => {
-      sendResponse(result);
+    // Clear previous error on manual check trigger
+    chrome.storage.local.set({ lastError: null }).then(() => {
+      pollMostaql({ source: 'manual' }).then((result) => {
+        sendResponse(result);
+      });
     });
     return true;
   }
