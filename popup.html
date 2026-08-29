@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mostaql Job Monitor</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-container">
+    <!-- Header -->
+    <header class="header">
+      <div class="header-brand">
+        <img src="icons/icon-32.png" alt="Logo" class="logo">
+        <div class="header-titles">
+          <h1>Mostaql Monitor</h1>
+          <span class="badge" id="statusBadge">Active</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Settings Form -->
+    <main class="content">
+      <!-- Keyword Filter Section -->
+      <section class="form-group">
+        <label for="keywordInput">
+          <strong>Keyword / Category Filters</strong>
+          <span class="hint">(comma-separated; leave empty for all jobs)</span>
+        </label>
+        <textarea 
+          id="keywordInput" 
+          rows="2" 
+          placeholder="e.g. node, backend, api, برمجة, لارافيل, بايثون"
+          spellcheck="false"
+        ></textarea>
+      </section>
+
+      <!-- Polling Interval Selector -->
+      <section class="form-group">
+        <label for="intervalSelect">
+          <strong>Check Frequency</strong>
+          <span class="hint">How often to check for new jobs</span>
+        </label>
+        <select id="intervalSelect" class="custom-select">
+          <option value="10">⚡ Every 10 seconds (Fast)</option>
+          <option value="30" selected>⏱️ Every 30 seconds (Recommended)</option>
+          <option value="60">Every 1 minute</option>
+          <option value="120">Every 2 minutes</option>
+          <option value="300">Every 5 minutes</option>
+        </select>
+      </section>
+
+      <!-- Toggle Controls -->
+      <div class="toggles-wrapper">
+        <!-- Auto Monitoring Toggle -->
+        <section class="toggle-group">
+          <div class="toggle-info">
+            <strong>Auto Monitoring</strong>
+            <span class="hint" id="toggleDescription">Active fast polling</span>
+          </div>
+          <label class="switch" for="pauseToggle">
+            <input type="checkbox" id="pauseToggle">
+            <span class="slider"></span>
+          </label>
+        </section>
+
+        <!-- Sound Alerts Toggle -->
+        <section class="toggle-group">
+          <div class="toggle-info">
+            <strong>Sound Alerts 🔊</strong>
+            <span class="hint">Play chime with notification</span>
+          </div>
+          <label class="switch" for="soundToggle">
+            <input type="checkbox" id="soundToggle" checked>
+            <span class="slider"></span>
+          </label>
+        </section>
+      </div>
+
+      <!-- Error banner if any -->
+      <div id="errorBanner" class="error-banner" style="display: none;"></div>
+
+      <!-- Action Buttons -->
+      <div class="actions">
+        <button id="checkNowBtn" class="btn btn-primary">
+          <span class="btn-icon">⚡</span>
+          <span id="btnText">Check Mostaql Now</span>
+        </button>
+        <button id="testNotifyBtn" class="btn btn-secondary">
+          <span class="btn-icon">🔔</span>
+          <span>Test Notification & Sound</span>
+        </button>
+      </div>
+
+      <!-- Live Status & Stats -->
+      <footer class="stats-footer">
+        <div class="stat-item">
+          <span class="stat-label">Last Check:</span>
+          <span class="stat-val" id="lastCheckVal">Never</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">Tracked:</span>
+          <span class="stat-val" id="seenCountVal">0</span>
+        </div>
+      </footer>
+    </main>
+
+    <!-- Toast message for user feedback -->
+    <div id="toast" class="toast" role="alert"></div>
+  </div>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

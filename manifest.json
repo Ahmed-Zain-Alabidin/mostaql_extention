@@ -1,0 +1,39 @@
+{
+  "manifest_version": 3,
+  "name": "Mostaql Job Monitor",
+  "version": "1.0.0",
+  "description": "Monitors Mostaql for new freelance projects and alerts you instantly with desktop notifications.",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Mostaql Job Monitor Settings",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "permissions": [
+    "alarms",
+    "notifications",
+    "storage",
+    "offscreen"
+  ],
+  "host_permissions": [
+    "*://*.mostaql.com/*",
+    "*://mostaql.com/*",
+    "*://*.hsoub.com/*",
+    "*://hsoub.com/*",
+    "*://*.hsoubcdn.com/*"
+  ]
+}
