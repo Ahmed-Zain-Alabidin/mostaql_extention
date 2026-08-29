@@ -162,7 +162,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   testNotifyBtn.addEventListener('click', async () => {
     testNotifyBtn.disabled = true;
     try {
-      const response = await chrome.runtime.sendMessage({ action: 'TEST_NOTIFICATION' });
+      if (soundToggle.checked) {
+        playNotificationSound().catch((err) => console.warn('Popup audio error:', err));
+      }
+      const response = await chrome.runtime.sendMessage({ action: 'TEST_NOTIFICATION', skipSound: true });
       showToast(response?.message || 'Test alert sent!');
     } catch (err) {
       console.error('Failed to send test alert:', err);

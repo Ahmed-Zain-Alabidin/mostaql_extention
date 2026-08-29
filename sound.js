@@ -4,92 +4,164 @@
  * Plays the custom MP3 notification sound:
  * 'soynoviembre-short-digital-notification-alert-440353.mp3'
  * 
- * Provides automated fallbacks to Web Audio harmonic synthesizer
- * and base64 WAV chime if HTML5 audio encounters playback restrictions.
+ * Uses multi-strategy playback:
+ * 1. Web Audio API with pre-decoded AudioBuffer (bypasses media autoplay restrictions).
+ * 2. DOM / HTML5 Audio Element playback.
+ * 3. Web Audio dual-tone synthesizer fallback.
+ * 4. Self-contained 16-bit WAV Data URI.
  */
 
 const CUSTOM_AUDIO_FILE = 'soynoviembre-short-digital-notification-alert-440353.mp3';
 
 let sharedAudioCtx = null;
-let cachedWavDataUri = null;
+let cachedAudioBuffer = null;
+let isDecoding = false;
+
+function getAudioUrl() {
+  if (typeof chrome !== 'undefined' && chrome.runtime?.getURL) {
+    try {
+      return chrome.runtime.getURL(CUSTOM_AUDIO_FILE);
+    } catch {}
+  }
+  return CUSTOM_AUDIO_FILE;
+}
+
+function getAudioContext() {
+  if (!sharedAudioCtx || sharedAudioCtx.state === 'closed') {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (AudioCtx) {
+      sharedAudioCtx = new AudioCtx();
+    }
+  }
+  return sharedAudioCtx;
+}
 
 /**
- * Plays the custom MP3 sound with instant fallback
+ * Preloads and decodes the audio file for instant low-latency playback
+ */
+async function getDecodedAudioBuffer(ctx) {
+  if (cachedAudioBuffer) return cachedAudioBuffer;
+  if (isDecoding) {
+    // Wait for in-progress decode
+    for (let i = 0; i < 20; i++) {
+      await new Promise((r) => setTimeout(r, 50));
+      if (cachedAudioBuffer) return cachedAudioBuffer;
+    }
+  }
+
+  isDecoding = true;
+  try {
+    const url = getAudioUrl();
+    const response = await fetch(url);
+    const arrayBuffer = await response.arrayBuffer();
+    cachedAudioBuffer = await ctx.decodeAudioData(arrayBuffer);
+    return cachedAudioBuffer;
+  } catch (err) {
+    console.warn('[Sound Engine] Could not decode MP3 into AudioBuffer:', err);
+    return null;
+  } finally {
+    isDecoding = false;
+  }
+}
+
+/**
+ * Primary function to play the notification sound
  */
 export async function playNotificationSound() {
-  // Strategy 1: HTML5 Audio playing the custom MP3 file
-  try {
-    const audioUrl = typeof chrome !== 'undefined' && chrome.runtime?.getURL
-      ? chrome.runtime.getURL(CUSTOM_AUDIO_FILE)
-      : CUSTOM_AUDIO_FILE;
+  const url = getAudioUrl();
 
-    const audio = new Audio(audioUrl);
+  // Strategy 1: Web Audio API (decodeAudioData & buffer source)
+  // This is the most reliable way in Chrome extension offscreen & popup pages
+  try {
+    const ctx = getAudioContext();
+    if (ctx) {
+      if (ctx.state === 'suspended') {
+        await ctx.resume();
+      }
+
+      const buffer = await getDecodedAudioBuffer(ctx);
+      if (buffer) {
+        const source = ctx.createBufferSource();
+        const gainNode = ctx.createGain();
+        gainNode.gain.value = 1.0;
+
+        source.buffer = buffer;
+        source.connect(gainNode);
+        gainNode.connect(ctx.destination);
+        source.start(0);
+        return true;
+      }
+    }
+  } catch (webAudioErr) {
+    console.warn('[Sound Engine] Strategy 1 (Web Audio Buffer) notice:', webAudioErr);
+  }
+
+  // Strategy 2: DOM Audio element or HTML5 Audio
+  try {
+    const domAudio = typeof document !== 'undefined' ? document.getElementById('alertAudio') : null;
+    const audio = domAudio || new Audio(url);
     audio.volume = 1.0;
-    
-    // Play audio
+    audio.currentTime = 0;
+
     const playPromise = audio.play();
     if (playPromise !== undefined) {
       await playPromise;
       return true;
     }
-  } catch (mp3Err) {
-    console.warn('[Sound Engine] HTML5 MP3 playback notice, trying Web Audio...', mp3Err);
+  } catch (html5Err) {
+    console.warn('[Sound Engine] Strategy 2 (HTML5 Audio) notice:', html5Err);
   }
 
-  // Strategy 2: Web Audio API Synthesizer (Instant bell/chime fallback)
+  // Strategy 3: Web Audio Synthesizer Harmonic Chime
   try {
-    const AudioCtx = window.AudioContext || window.webkitAudioContext;
-    if (AudioCtx) {
-      if (!sharedAudioCtx || sharedAudioCtx.state === 'closed') {
-        sharedAudioCtx = new AudioCtx();
+    const ctx = getAudioContext();
+    if (ctx) {
+      if (ctx.state === 'suspended') {
+        await ctx.resume();
       }
 
-      if (sharedAudioCtx.state === 'suspended') {
-        await sharedAudioCtx.resume();
-      }
-
-      const now = sharedAudioCtx.currentTime;
+      const now = ctx.currentTime;
 
       // Note 1: 587.33 Hz (D5)
-      const osc1 = sharedAudioCtx.createOscillator();
-      const gain1 = sharedAudioCtx.createGain();
+      const osc1 = ctx.createOscillator();
+      const gain1 = ctx.createGain();
       osc1.type = 'sine';
       osc1.frequency.setValueAtTime(587.33, now);
-      gain1.gain.setValueAtTime(0.4, now);
+      gain1.gain.setValueAtTime(0.5, now);
       gain1.gain.exponentialRampToValueAtTime(0.0001, now + 0.35);
       osc1.connect(gain1);
-      gain1.connect(sharedAudioCtx.destination);
+      gain1.connect(ctx.destination);
       osc1.start(now);
       osc1.stop(now + 0.35);
 
       // Note 2: 880.0 Hz (A5)
-      const osc2 = sharedAudioCtx.createOscillator();
-      const gain2 = sharedAudioCtx.createGain();
+      const osc2 = ctx.createOscillator();
+      const gain2 = ctx.createGain();
       osc2.type = 'sine';
       osc2.frequency.setValueAtTime(880.0, now + 0.12);
       gain2.gain.setValueAtTime(0.0001, now);
-      gain2.gain.setValueAtTime(0.5, now + 0.12);
+      gain2.gain.setValueAtTime(0.6, now + 0.12);
       gain2.gain.exponentialRampToValueAtTime(0.0001, now + 0.75);
       osc2.connect(gain2);
-      gain2.connect(sharedAudioCtx.destination);
+      gain2.connect(ctx.destination);
       osc2.start(now + 0.12);
       osc2.stop(now + 0.75);
 
       return true;
     }
-  } catch (webAudioErr) {
-    console.warn('[Sound Engine] Web Audio synthesizer notice:', webAudioErr);
+  } catch (synthErr) {
+    console.warn('[Sound Engine] Strategy 3 (Synthesizer) notice:', synthErr);
   }
 
-  // Strategy 3: Self-contained WAV Data URI Fallback
+  // Strategy 4: Fallback WAV Data URI
   try {
     const uri = generateChimeWavDataUri();
     const audio = new Audio(uri);
     audio.volume = 1.0;
     await audio.play();
     return true;
-  } catch (html5Err) {
-    console.error('[Sound Engine] Audio playback failed:', html5Err);
+  } catch (wavErr) {
+    console.error('[Sound Engine] All sound strategies failed:', wavErr);
     return false;
   }
 }
@@ -98,8 +170,6 @@ export async function playNotificationSound() {
  * Generates an embedded 2-tone chime WAV audio Data URI
  */
 export function generateChimeWavDataUri() {
-  if (cachedWavDataUri) return cachedWavDataUri;
-
   const sampleRate = 44100;
   const duration = 0.55;
   const numSamples = Math.floor(sampleRate * duration);
@@ -132,7 +202,7 @@ export function generateChimeWavDataUri() {
   // 'RIFF'
   view.setUint32(0, 0x52494646, false);
   view.setUint32(4, chunkSize, true);
-  view.setUint32(8, 0x57415645, false); // 'WAVE'
+  view.setUint32(8, 0x57415645, false);
 
   // 'fmt '
   view.setUint32(12, 0x666d7420, false);
@@ -158,6 +228,5 @@ export function generateChimeWavDataUri() {
   }
 
   const base64 = typeof btoa !== 'undefined' ? btoa(binary) : Buffer.from(wavBytes).toString('base64');
-  cachedWavDataUri = 'data:audio/wav;base64,' + base64;
-  return cachedWavDataUri;
+  return 'data:audio/wav;base64,' + base64;
 }

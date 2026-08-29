@@ -425,7 +425,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   
   if (request?.action === 'TEST_NOTIFICATION') {
     chrome.storage.sync.get(['soundEnabled']).then((sync) => {
-      const soundEnabled = sync.soundEnabled !== false;
+      const soundEnabled = sync.soundEnabled !== false && !request?.skipSound;
       dispatchJobNotification({
         id: 'test_' + Date.now(),
         title: 'تطوير وبرمجة منصة وتطبيق ويب متكامل',
