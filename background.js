@@ -1,18 +1,19 @@
 /**
  * background.js - Main Service Worker for Mostaql Job Monitor
  * 
- * Runs in the background:
- * 1. Coordinates persistent monitoring timers with watchdog alarms.
+ * Runs automatically 24/7 in the background:
+ * 1. Automatic periodic polling every 15 seconds using self-scheduling Chrome alarms + offscreen heartbeat.
  * 2. Fetches Mostaql latest projects safely with timeouts and wildcard permissions.
  * 3. Compares incoming projects against seen history.
- * 4. Dispatches instant rich desktop notifications with job details + sound chime.
+ * 4. Dispatches instant rich desktop notifications with job details + custom MP3 alert sound.
  * 5. Opens the project URL in a new tab when clicked.
  */
 
 import { normalizeArabicText, parseJobsFromHTML } from './parser.js';
 
+const ALARM_AUTO_POLL = 'MOSTAQL_AUTO_POLL_ALARM';
 const ALARM_WATCHDOG_NAME = 'MOSTAQL_WATCHDOG_ALARM';
-const DEFAULT_INTERVAL_SECONDS = 15; // Fast & safe 15s monitoring
+const DEFAULT_INTERVAL_SECONDS = 15;
 const MAX_SEEN_ITEMS = 200;
 const MOSTAQL_PROJECTS_URL = 'https://mostaql.com/projects?sort=latest';
 const MOSTAQL_FALLBACK_URL = 'https://mostaql.com/projects';
@@ -20,7 +21,7 @@ const MOSTAQL_FALLBACK_URL = 'https://mostaql.com/projects';
 let isFetching = false;
 
 // ============================================================================
-// 1. Lifecycle & Watchdog
+// 1. Lifecycle & Persistent Scheduling
 // ============================================================================
 
 chrome.runtime.onInstalled.addListener(async (details) => {
@@ -28,10 +29,10 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   
   const sync = await chrome.storage.sync.get(['keywords', 'isPaused', 'soundEnabled', 'pollIntervalSeconds']);
   const updates = {};
-  if (sync.isPaused === undefined) updates.isPaused = false;
+  if (sync.isPaused === undefined) updates.isPaused = false; // Auto monitoring ON by default
   if (sync.keywords === undefined) updates.keywords = '';
   if (sync.soundEnabled === undefined) updates.soundEnabled = true;
-  if (sync.pollIntervalSeconds === undefined || sync.pollIntervalSeconds === 3 || sync.pollIntervalSeconds === 30) {
+  if (sync.pollIntervalSeconds === undefined || sync.pollIntervalSeconds === 3) {
     updates.pollIntervalSeconds = DEFAULT_INTERVAL_SECONDS;
   }
 
@@ -43,38 +44,83 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   if (!local.seenJobIds) {
     await chrome.storage.local.set({ seenJobIds: [], lastCheckTime: null, lastError: null });
   } else {
-    // Clear any stale previous error banner on update
     await chrome.storage.local.set({ lastError: null });
   }
 
   await ensureOffscreenDocument();
   await setupWatchdogAlarm();
-  
-  // Initial check after short delay
-  setTimeout(() => pollMostaql({ source: 'install' }), 1000);
+  await scheduleNextAutoPoll(2); // Start first automatic poll in 2 seconds
 });
 
 chrome.runtime.onStartup.addListener(async () => {
   console.log('[Mostaql Monitor] Chrome startup.');
   await ensureOffscreenDocument();
   await setupWatchdogAlarm();
-  pollMostaql({ source: 'startup' });
+  await scheduleNextAutoPoll(3);
 });
 
+// Setup 1-minute fallback watchdog alarm
 async function setupWatchdogAlarm() {
   await chrome.alarms.clear(ALARM_WATCHDOG_NAME);
   chrome.alarms.create(ALARM_WATCHDOG_NAME, { periodInMinutes: 1 });
 }
 
+/**
+ * Schedules the next automatic poll with exact second precision
+ */
+export async function scheduleNextAutoPoll(overrideSeconds = null) {
+  try {
+    const sync = await chrome.storage.sync.get(['isPaused', 'pollIntervalSeconds']);
+    if (sync.isPaused) {
+      await chrome.alarms.clear(ALARM_AUTO_POLL);
+      return;
+    }
+
+    const sec = overrideSeconds || Math.max(5, Number(sync.pollIntervalSeconds) || DEFAULT_INTERVAL_SECONDS);
+    await chrome.alarms.clear(ALARM_AUTO_POLL);
+    
+    // Schedule alarm to fire in `sec` seconds
+    chrome.alarms.create(ALARM_AUTO_POLL, {
+      when: Date.now() + (sec * 1000)
+    });
+  } catch (err) {
+    console.warn('[Mostaql Monitor] Scheduling notice:', err);
+  }
+}
+
+// Alarm Event Listener
 chrome.alarms.onAlarm.addListener(async (alarm) => {
-  if (alarm.name === ALARM_WATCHDOG_NAME) {
+  if (alarm.name === ALARM_AUTO_POLL) {
+    try {
+      await ensureOffscreenDocument();
+      await pollMostaql({ source: 'alarm_auto' });
+    } finally {
+      await scheduleNextAutoPoll(); // Automatically schedule the subsequent check
+    }
+  } else if (alarm.name === ALARM_WATCHDOG_NAME) {
     await ensureOffscreenDocument();
-    pollMostaql({ source: 'watchdog' });
+    // Watchdog check to ensure the cycle never dies
+    const sync = await chrome.storage.sync.get(['isPaused']);
+    if (!sync.isPaused) {
+      const activeAlarm = await chrome.alarms.get(ALARM_AUTO_POLL);
+      if (!activeAlarm) {
+        await scheduleNextAutoPoll(1);
+      }
+    }
+  }
+});
+
+// Watch for storage settings changes (pause/resume, interval changes)
+chrome.storage.onChanged.addListener((changes, namespace) => {
+  if (namespace === 'sync') {
+    if (changes.isPaused || changes.pollIntervalSeconds) {
+      scheduleNextAutoPoll(1);
+    }
   }
 });
 
 // ============================================================================
-// 2. Offscreen Document Manager (Audio & Timer Support)
+// 2. Offscreen Document Manager (Audio & Secondary Heartbeat)
 // ============================================================================
 
 let creatingOffscreenPromise = null;
@@ -201,7 +247,7 @@ export async function pollMostaql(options = {}) {
       throw new Error('Empty response received from Mostaql');
     }
 
-    // High-speed direct parsing
+    // Direct high-speed parsing
     const parsedJobs = parseJobsFromHTML(html);
 
     if (!parsedJobs || parsedJobs.length === 0) {
@@ -214,7 +260,7 @@ export async function pollMostaql(options = {}) {
     const existingSeenIds = localData.seenJobIds || [];
     const seenSet = new Set(existingSeenIds);
 
-    // Baseline setup on initial load
+    // Initial baseline setup (first run): store current items so user isn't spammed with 25 notifications
     if (existingSeenIds.length === 0) {
       const allCurrentIds = parsedJobs.map(j => j.id);
       await chrome.storage.local.set({
@@ -223,7 +269,7 @@ export async function pollMostaql(options = {}) {
         lastError: null
       });
       console.log(`[Mostaql Monitor] Initial baseline established with ${allCurrentIds.length} projects.`);
-      return { success: true, count: 0, message: `Active: Tracking ${allCurrentIds.length} projects` };
+      return { success: true, count: 0, message: `Active: Auto-tracking ${allCurrentIds.length} projects` };
     }
 
     // Identify NEW jobs
@@ -349,7 +395,6 @@ async function dispatchJobNotification(job, playSound = true) {
       ]
     });
   } catch (err) {
-    // Fallback without buttons if platform restricts action buttons
     try {
       await chrome.notifications.create(notificationId, {
         type: 'basic',
@@ -406,16 +451,17 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request?.action === 'CHECK_NOW') {
-    // Clear previous error on manual check trigger
     chrome.storage.local.set({ lastError: null }).then(() => {
       pollMostaql({ source: 'manual' }).then((result) => {
         sendResponse(result);
+        scheduleNextAutoPoll(); // Continue automatic loop
       });
     });
     return true;
   }
 
   if (request?.action === 'RESTART_LOOP') {
+    scheduleNextAutoPoll(1);
     chrome.runtime.sendMessage({ action: 'RESTART_OFFSCREEN_TIMER' }, () => {
       if (chrome.runtime.lastError) {}
     });
@@ -442,5 +488,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 });
 
-// Ensure offscreen document is started
+// Start automatic loop & offscreen document immediately
 ensureOffscreenDocument();
+scheduleNextAutoPoll(1);

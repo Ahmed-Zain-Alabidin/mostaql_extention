@@ -47,8 +47,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     } else {
       statusBadge.textContent = 'Active';
       statusBadge.classList.remove('paused');
-      const sec = intervalSec || intervalSelect.value || 30;
-      toggleDescription.textContent = sec < 60 ? `Checking every ${sec}s` : `Checking every ${Math.round(sec / 60)}m`;
+      const sec = intervalSec || intervalSelect.value || 15;
+      toggleDescription.textContent = sec < 60 ? `Auto-checking every ${sec}s` : `Auto-checking every ${Math.round(sec / 60)}m`;
     }
   }
 
