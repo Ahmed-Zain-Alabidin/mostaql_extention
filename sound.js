@@ -1,90 +1,42 @@
 /**
- * sound.js - Bulletproof Audio Engine for Chrome Extension
+ * sound.js - Bulletproof Audio Engine for Mostaql Extension
  * 
- * Provides:
- * 1. Web Audio API harmonic chime (high fidelity, instant attack/decay).
- * 2. Self-contained 16-bit 44.1kHz WAV chime Data URI generator.
- * 3. HTML5 Audio element fallback (works in any DOM context).
+ * Plays the custom MP3 notification sound:
+ * 'soynoviembre-short-digital-notification-alert-440353.mp3'
+ * 
+ * Provides automated fallbacks to Web Audio harmonic synthesizer
+ * and base64 WAV chime if HTML5 audio encounters playback restrictions.
  */
+
+const CUSTOM_AUDIO_FILE = 'soynoviembre-short-digital-notification-alert-440353.mp3';
 
 let sharedAudioCtx = null;
 let cachedWavDataUri = null;
 
 /**
- * Generates an embedded, crystal-clear 2-tone chime WAV audio Data URI
- */
-export function generateChimeWavDataUri() {
-  if (cachedWavDataUri) return cachedWavDataUri;
-
-  const sampleRate = 44100;
-  const duration = 0.55; // 550ms
-  const numSamples = Math.floor(sampleRate * duration);
-  const buffer = new Int16Array(numSamples);
-
-  for (let i = 0; i < numSamples; i++) {
-    const t = i / sampleRate;
-    // Tone 1: 587.33 Hz (D5) - warm bell onset
-    const env1 = Math.exp(-t * 9);
-    const s1 = Math.sin(2 * Math.PI * 587.33 * t) * env1 * 0.45;
-
-    // Tone 2: 880.0 Hz (A5) - bright chime decay
-    let s2 = 0;
-    if (t >= 0.1) {
-      const t2 = t - 0.1;
-      const env2 = Math.exp(-t2 * 6.5);
-      s2 = Math.sin(2 * Math.PI * 880.0 * t2) * env2 * 0.55;
-    }
-
-    const sample = Math.max(-1, Math.min(1, s1 + s2));
-    buffer[i] = sample < 0 ? sample * 32768 : sample * 32767;
-  }
-
-  const byteRate = sampleRate * 2;
-  const blockAlign = 2;
-  const dataSize = numSamples * 2;
-  const chunkSize = 36 + dataSize;
-
-  const header = new ArrayBuffer(44);
-  const view = new DataView(header);
-
-  // 'RIFF' chunk descriptor
-  view.setUint32(0, 0x52494646, false);
-  view.setUint32(4, chunkSize, true);
-  view.setUint32(8, 0x57415645, false); // 'WAVE'
-
-  // 'fmt ' sub-chunk
-  view.setUint32(12, 0x666d7420, false);
-  view.setUint32(16, 16, true);          // Subchunk1Size (16 for PCM)
-  view.setUint16(20, 1, true);           // AudioFormat (1 = PCM)
-  view.setUint16(22, 1, true);           // NumChannels (1 = Mono)
-  view.setUint32(24, sampleRate, true);  // SampleRate
-  view.setUint32(28, byteRate, true);    // ByteRate
-  view.setUint16(32, blockAlign, true);  // BlockAlign
-  view.setUint16(34, 16, true);          // BitsPerSample
-
-  // 'data' sub-chunk
-  view.setUint32(36, 0x64617461, false);
-  view.setUint32(40, dataSize, true);
-
-  const wavBytes = new Uint8Array(44 + dataSize);
-  wavBytes.set(new Uint8Array(header), 0);
-  wavBytes.set(new Uint8Array(buffer.buffer), 44);
-
-  let binary = '';
-  for (let i = 0; i < wavBytes.length; i++) {
-    binary += String.fromCharCode(wavBytes[i]);
-  }
-
-  const base64 = typeof btoa !== 'undefined' ? btoa(binary) : Buffer.from(wavBytes).toString('base64');
-  cachedWavDataUri = 'data:audio/wav;base64,' + base64;
-  return cachedWavDataUri;
-}
-
-/**
- * Plays a pleasant, audible alert chime using Web Audio with HTML5 fallback.
+ * Plays the custom MP3 sound with instant fallback
  */
 export async function playNotificationSound() {
-  // Strategy 1: Web Audio API (instant, low latency)
+  // Strategy 1: HTML5 Audio playing the custom MP3 file
+  try {
+    const audioUrl = typeof chrome !== 'undefined' && chrome.runtime?.getURL
+      ? chrome.runtime.getURL(CUSTOM_AUDIO_FILE)
+      : CUSTOM_AUDIO_FILE;
+
+    const audio = new Audio(audioUrl);
+    audio.volume = 1.0;
+    
+    // Play audio
+    const playPromise = audio.play();
+    if (playPromise !== undefined) {
+      await playPromise;
+      return true;
+    }
+  } catch (mp3Err) {
+    console.warn('[Sound Engine] HTML5 MP3 playback notice, trying Web Audio...', mp3Err);
+  }
+
+  // Strategy 2: Web Audio API Synthesizer (Instant bell/chime fallback)
   try {
     const AudioCtx = window.AudioContext || window.webkitAudioContext;
     if (AudioCtx) {
@@ -129,7 +81,7 @@ export async function playNotificationSound() {
     console.warn('[Sound Engine] Web Audio synthesizer notice:', webAudioErr);
   }
 
-  // Strategy 2: HTML5 Audio with embedded base64 WAV chime
+  // Strategy 3: Self-contained WAV Data URI Fallback
   try {
     const uri = generateChimeWavDataUri();
     const audio = new Audio(uri);
@@ -137,7 +89,75 @@ export async function playNotificationSound() {
     await audio.play();
     return true;
   } catch (html5Err) {
-    console.error('[Sound Engine] HTML5 Audio fallback failed:', html5Err);
+    console.error('[Sound Engine] Audio playback failed:', html5Err);
     return false;
   }
+}
+
+/**
+ * Generates an embedded 2-tone chime WAV audio Data URI
+ */
+export function generateChimeWavDataUri() {
+  if (cachedWavDataUri) return cachedWavDataUri;
+
+  const sampleRate = 44100;
+  const duration = 0.55;
+  const numSamples = Math.floor(sampleRate * duration);
+  const buffer = new Int16Array(numSamples);
+
+  for (let i = 0; i < numSamples; i++) {
+    const t = i / sampleRate;
+    const env1 = Math.exp(-t * 9);
+    const s1 = Math.sin(2 * Math.PI * 587.33 * t) * env1 * 0.45;
+
+    let s2 = 0;
+    if (t >= 0.1) {
+      const t2 = t - 0.1;
+      const env2 = Math.exp(-t2 * 6.5);
+      s2 = Math.sin(2 * Math.PI * 880.0 * t2) * env2 * 0.55;
+    }
+
+    const sample = Math.max(-1, Math.min(1, s1 + s2));
+    buffer[i] = sample < 0 ? sample * 32768 : sample * 32767;
+  }
+
+  const byteRate = sampleRate * 2;
+  const blockAlign = 2;
+  const dataSize = numSamples * 2;
+  const chunkSize = 36 + dataSize;
+
+  const header = new ArrayBuffer(44);
+  const view = new DataView(header);
+
+  // 'RIFF'
+  view.setUint32(0, 0x52494646, false);
+  view.setUint32(4, chunkSize, true);
+  view.setUint32(8, 0x57415645, false); // 'WAVE'
+
+  // 'fmt '
+  view.setUint32(12, 0x666d7420, false);
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, byteRate, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, 16, true);
+
+  // 'data'
+  view.setUint32(36, 0x64617461, false);
+  view.setUint32(40, dataSize, true);
+
+  const wavBytes = new Uint8Array(44 + dataSize);
+  wavBytes.set(new Uint8Array(header), 0);
+  wavBytes.set(new Uint8Array(buffer.buffer), 44);
+
+  let binary = '';
+  for (let i = 0; i < wavBytes.length; i++) {
+    binary += String.fromCharCode(wavBytes[i]);
+  }
+
+  const base64 = typeof btoa !== 'undefined' ? btoa(binary) : Buffer.from(wavBytes).toString('base64');
+  cachedWavDataUri = 'data:audio/wav;base64,' + base64;
+  return cachedWavDataUri;
 }

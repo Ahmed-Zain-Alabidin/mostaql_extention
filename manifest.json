@@ -35,5 +35,13 @@
     "*://*.hsoub.com/*",
     "*://hsoub.com/*",
     "*://*.hsoubcdn.com/*"
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "soynoviembre-short-digital-notification-alert-440353.mp3"
+      ],
+      "matches": ["<all_urls>"]
+    }
   ]
 }
